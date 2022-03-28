@@ -1,97 +1,70 @@
 package org.rudy;
 
+import io.smallrye.mutiny.Multi;
+import io.smallrye.mutiny.Uni;
 import io.vertx.core.json.Json;
+import io.vertx.mutiny.pgclient.PgPool;
 
+
+import javax.annotation.PostConstruct;
+import javax.inject.Inject;
 import javax.ws.rs.*;
-import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.stream.Collectors;
+import java.net.URI;
 
 @Path("/movies")
 public class MovieResource
 {
-    public static List<Movie> movies = new ArrayList<>();
+    @Inject
+    PgPool db;
 
-    @GET
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response getMovies()
+    @PostConstruct
+    void config()
     {
-        return Response.ok(movies).build();
+        InitDb();
     }
 
     @GET
-    @Produces(MediaType.TEXT_PLAIN)
-    @Path("/size")
-    public Integer countMovies()
+    public Multi<Movie> get()
     {
-        return movies.size();
+        return Movie.findAll(db);
+    }
+
+    @GET
+    @Path("{id}")
+    public Uni<Response> get(
+            @PathParam("id") Long id)
+    {
+        return Movie.findById(db, id)
+                .onItem().transform(movie -> movie != null ? Response.ok(movie) : Response.status(Response.Status.NOT_FOUND))
+                .onItem().transform(Response.ResponseBuilder::build);
     }
 
     @POST
-    @Consumes(MediaType.APPLICATION_JSON)
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response createMovie(Movie newMovie)
+    public Uni<Response> create(Movie movie)
     {
-        movies.add(newMovie);
-        return Response.ok(movies).build();
-    }
-
-    @PUT
-    @Path("updateTitle/{id}/{title}")
-    @Consumes(MediaType.APPLICATION_JSON)
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response updateMovieTitle(
-            @PathParam("id")Long id,
-            @PathParam("title") String title)
-    {
-        movies = movies.stream()
-                .filter(movie -> movie.getId().equals(id))
-                .map(movie ->
-                {
-                    movie.setTitle(title);
-                    return movie;
-                }).collect(Collectors.toList());
-
-        return Response.ok(movies).build();
-    }
-
-    @PUT
-    @Path("updateId/{title}/{id}")
-    @Consumes(MediaType.APPLICATION_JSON)
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response updateMovieId(
-            @PathParam("title") String title,
-            @PathParam("id") Long id
-    )
-    {
-        movies = movies.stream()
-                .filter(movie -> movie.getTitle().equals(title))
-                .map(movie ->
-                {
-                    movie.setId(id);
-                    return movie;
-                }).collect(Collectors.toList());
-
-        return Response.ok(movies).build();
+        return Movie.save(db, movie.getTitle())
+                .onItem().transform(id -> URI.create("/movies/" + id))
+                .onItem().transform(uri -> Response.created(uri).build());
     }
 
     @DELETE
     @Path("{id}")
-    @Consumes(MediaType.APPLICATION_JSON)
-    public Response removeMovie(
+    public Uni<Response> delete(
             @PathParam("id") Long id)
     {
-        Optional<Movie> movieToDelete = movies.stream().filter(movie -> movie.getId().equals(id)).findFirst();
+        return Movie.delete(db, id)
+                .onItem().transform(deleted -> deleted ? Response.status(Response.Status.NO_CONTENT) : Response.status(Response.Status.NOT_FOUND))
+                .onItem().transform(Response.ResponseBuilder::build);
+    }
 
-        if (movieToDelete.isPresent())
-        {
-            movies.remove(movieToDelete.get());
-            return Response.noContent().build();
-        }
-
-        return Response.status(Response.Status.BAD_REQUEST).build();
+    private void InitDb()
+    {
+        db.query("DROP TABLE IF EXISTS movies").execute()
+                .flatMap(m -> db.query("CREATE TABLE movies (id SERIAL PRIMARY KEY, title TEXT NOT NULL)").execute())
+                .flatMap(m -> db.query("INSERT INTO movies (title) VALUES('The Lord of the Rings')").execute())
+                .flatMap(m -> db.query("INSERT INTO movies (title) VALUES('Dune')").execute())
+                .await()
+                .indefinitely();
     }
 }
