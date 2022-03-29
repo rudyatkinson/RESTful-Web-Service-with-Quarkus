@@ -50,6 +50,11 @@
       <artifactId>rest-assured</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-mongodb-panache</artifactId>
+      <version>2.6.1.Final</version>
+    </dependency>
   </dependencies>
   <build>
     <plugins>
